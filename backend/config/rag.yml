@@ -1,0 +1,15 @@
+# 生成回答用的模型（质量优先）
+chat_model_name: qwen3.8-max
+
+# 意图分类这类「只输出一个词」的场景用（速度优先）
+# 分类用 max 档纯属浪费：实测它要思考 3~5 秒，只为了吐一个 "news_qa"
+fast_model_name: qwen-turbo
+
+embedding_model_name: text-embedding-v4
+
+# qwen3 系列默认带「思考模式」：回答前先想很久，思考的 token 会流式吐出来但 content 为空。
+# 用户感受到的首字延迟基本等于思考时间。同一段 prompt 实测：
+#   带思考   → 首字 3922 ms，26 个空 chunk
+#   关掉思考 → 首字  721 ms， 4 个空 chunk
+# 所以默认关掉。若以后要做需要长链条推理的任务，把它改成 false 再单独评估。
+disable_thinking: true

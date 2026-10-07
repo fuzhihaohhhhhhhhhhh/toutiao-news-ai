@@ -1,0 +1,26 @@
+# 统一行尾：避免在 Windows 上出现"改一行、整个文件都被标记为改动"的假 diff
+* text=auto eol=lf
+
+# 明确声明二进制文件，防止 Git 做行尾转换破坏文件
+*.pdf      binary
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.ico      binary
+*.svg      text
+*.sqlite3  binary
+*.bin      binary
+*.woff     binary
+*.woff2    binary
+
+# 语言标注（让 GitHub 的语法高亮与语言统计更准确）
+*.py       text
+*.vue      text
+*.js       text
+*.json     text
+*.yml      text
+*.yaml     text
+*.md       text
+*.sql      text
+*.txt      text

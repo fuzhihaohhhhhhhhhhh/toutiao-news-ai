@@ -1,0 +1,64 @@
+# 项目依赖清单
+#
+# 环境：Python 3.13（本机解释器 D:\python\python.exe）
+# 本项目**不使用**项目内虚拟环境，依赖统一装在上述解释器的 site-packages 下。
+#
+# 安装：
+#     D:\python\python.exe -m pip install -r requirements.txt
+#
+# 版本号取自本机"已验证可跑通"的环境（服务启动 + text/test_smoke.py 20 条用例通过）。
+
+# ── Web 框架 ──
+fastapi==0.141.1
+starlette==1.3.1
+uvicorn==0.52.1
+
+# ── 数据校验与配置 ──
+pydantic==2.13.4
+PyYAML==6.0.3
+python-dotenv==1.2.2
+
+# ── 数据库：MySQL 业务库 + PostgreSQL 聊天库 ──
+# 注意：下面三个包在代码里**没有任何 import**，但都是必需的，漏装会在运行期才报错：
+#   aiomysql  —— 只以字符串出现在 config/db_config.py 的 "mysql+aiomysql://..." 连接串里
+#   asyncpg   —— 只以字符串出现在 config/pg_config.py 的 "postgresql+asyncpg://..." 连接串里
+#                SQLAlchemy 在运行期按连接串去加载驱动，代码里 import 不到它们
+#   greenlet  —— SQLAlchemy 提供异步能力的硬性依赖，缺失时 create_async_engine 直接报错
+SQLAlchemy==2.0.51
+aiomysql==0.3.2
+asyncpg==0.32.0
+greenlet==3.5.4
+
+# ── 缓存（Redis：新闻缓存 + 聊天缓存 + 限流 + embedding 缓存）──
+redis==8.1.0
+
+# ── 密码哈希 ──
+# utils/security.py 直接使用 bcrypt，**未使用 passlib**
+bcrypt==5.0.0
+
+# ── LangChain / LangGraph / RAG ──
+# 走的是 DashScope 的 OpenAI 兼容端点（ChatOpenAI + .../compatible-mode/v1）
+langchain-core==1.5.3
+langchain-openai==1.4.1
+langchain-text-splitters==1.1.2
+langchain-chroma==1.1.0
+langgraph==1.2.10
+
+# ── text/ 压测与评测脚本 ──
+httpx==0.28.1
+
+# ── 测试（text/test_smoke.py，20 条用例；LLM 用例由 RUN_LLM_TESTS=1 控制）──
+pytest==9.1.1
+
+
+# ============================================================
+# 以下包本项目**不需要**，请勿添加：
+#   dashscope —— 虽然 .env 里有 DASHSCOPE_API_KEY，但项目走的是 OpenAI 兼容端点，
+#                没有引入 DashScope 原生 SDK
+#   tavily    —— .env 里有 TAVILY_API_KEY，但全项目零引用，属早期模板残留
+#   passlib   —— 网上教程常写"passlib+bcrypt"，本项目是直接用 bcrypt
+#   ipython   —— 仅 ai_agent/graph.py 的 __main__ 调试块用（画图），可选
+#
+# 另注：本机全局环境里还装有 streamlit / pandas / kubernetes / pydeck 等数十个
+# 与本项目无关的包，那是其它项目留下的，**不要**用 pip freeze 全量导出成依赖清单。
+# ============================================================

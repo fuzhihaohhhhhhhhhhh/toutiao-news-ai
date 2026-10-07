@@ -1,0 +1,3 @@
+main_prompt_path : ai_agent/prompts/main_prompt.txt
+rag_summarize_prompt_path : ai_agent/prompts/rag_summarize.txt
+report_prompt_path : ai_agent/prompts/report_prompt.txt
