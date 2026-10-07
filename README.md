@@ -103,7 +103,6 @@ flowchart TB
     A3 --> LLM
     C --> LLM
     A3 --> RD
-    CH -. "embedding / 检索" .-> LLM
 ```
 
 ### AI 问答链路
