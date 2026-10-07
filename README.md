@@ -102,7 +102,6 @@ flowchart TB
     A1 --> LLM
     A3 --> LLM
     C --> LLM
-    A3 --> RD
 ```
 
 ### AI 问答链路
