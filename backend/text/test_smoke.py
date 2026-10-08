@@ -262,6 +262,53 @@ def test_05_不存在的新闻应返回404(client):
     )
 
 
+def test_05b_中文数据没有乱码(client):
+    """
+    防止 MySQL 字符集错误把中文存成双重编码。
+
+    这个坑实际踩过：官方 mysql 镜像没有设置 locale，容器**首次**启动导入
+    docs/sql/database.sql 时，镜像里的 mysql 客户端把字符集判成了 latin1，
+    于是 UTF-8 的中文字节被当 latin1 解释、再由服务端转成 utf8mb4 存起来。
+
+    实测（HEX 判定，无编码歧义）：
+        正确  "头条" -> E5A4B4E69DA1        CHAR_LENGTH = 2
+        乱码  "头条" -> C3A5C2A4C2B4…       CHAR_LENGTH = 6
+        新闻标题：正确的 15 字坏成了 37 字
+
+    修法见 docker/mysql-charset.cnf（强制 mysql 客户端使用 utf8mb4），
+    对应 docker-compose.yml 里 mysql 服务的那条挂载。
+
+    编号插在 05 之后、写成 05b，是为了不打乱后面 06~20 的既有编号。
+    """
+    r = client.get("/api/news/categories")
+    assert r.status_code == 200, f"分类接口返回 {r.status_code}"
+    names = [c["name"] for c in r.json()["data"]]
+    assert names, "分类列表为空"
+
+    # 分类名都是 2 个汉字；双重编码后会膨胀成 6 个字符
+    overlong = [n for n in names if len(n) > 4]
+    assert not overlong, (
+        f"分类名长度异常，疑似字符集双重编码：{overlong}\n"
+        f"完整列表：{names}\n"
+        f"排查顺序：\n"
+        f"  ① 看 docs/sql/database.sql 顶部的 `SET NAMES utf8mb4;` 是否还在；\n"
+        f"  ② 若数据库已是对的、但接口仍乱码 —— 多半是 Redis 里留着修好之前写入的旧缓存，\n"
+        f"     执行 `docker compose exec redis redis-cli FLUSHDB` 后重试"
+    )
+    assert "头条" in names, f"分类里找不到「头条」，实际是：{names}"
+
+    # 新闻标题同理：双重编码会让长度膨胀约 2.5 倍
+    r = client.get("/api/news/list", params={"categoryId": 1, "page": 1, "pageSize": 3})
+    assert r.status_code == 200
+    titles = [n["title"] for n in r.json()["data"]["list"]]
+    assert titles, "该分类下没有新闻，无法校验中文"
+    longest = max(titles, key=len)
+    assert len(longest) < 60, (
+        f"新闻标题异常长（{len(longest)} 字），疑似字符集双重编码。\n"
+        f"最长的一条：{longest[:80]}"
+    )
+
+
 # ======================================================================
 # 三、用户与鉴权
 # ======================================================================

@@ -126,7 +126,94 @@ flowchart LR
 
 ---
 
-## 快速开始
+## Docker 一键启动（推荐）
+
+只需要装好 **Docker Desktop**，不必在本机安装 MySQL / PostgreSQL / Redis。
+
+```bash
+# 1) 准备大模型 Key —— .env 不入版本库，必须自己建
+cp backend/.env.example backend/.env
+#    Windows PowerShell:  Copy-Item backend\.env.example backend\.env
+#    然后填入 DASHSCOPE_API_KEY
+
+# 2) 启动全部服务（后端 + MySQL + PostgreSQL + Redis）
+docker compose up -d --build
+
+# 3) 构建站内新闻向量库（AI 问答依赖它，只需跑一次）
+docker compose exec backend python scripts/build_vector.py
+```
+
+启动完成后：
+
+- 接口文档 <http://127.0.0.1:8000/docs>
+- 健康检查 <http://127.0.0.1:8000/>
+
+想连前端一起跑（额外起一个 Node 容器）：
+
+```bash
+docker compose --profile web up -d --build     # 前端 http://localhost:5173
+```
+
+### 几个设计说明
+
+- **数据库一律不映射到宿主机端口**，只在容器内部网络互联。这样即使你本机已经跑着 MySQL / Redis / PostgreSQL，也不会因为端口被占而启动失败，同时数据库也不对外暴露。
+- **所有容器固定 `Asia/Shanghai` 时区**。容器默认是 UTC，会让 `datetime.now()` 差 8 小时，直接影响 token 过期判定、"今天有什么新闻"的当天判断、以及月度报告的月份边界。
+- **数据库地址与密码由 compose 注入**，会覆盖 `backend/.env` 里的 localhost 配置（Compose 中 `environment` 优先级高于 `env_file`），所以 `backend/.env` 里只需要填大模型 Key。
+- **向量库与增量索引指纹放在同一个数据卷**里持久化，容器重建后不需要重新 embedding。
+- 首次构建镜像耗时较长（约 1.5~2 GB）：`chromadb` 会带进 `onnxruntime` 等较大的依赖。
+
+### 常用命令
+
+```bash
+docker compose logs -f backend     # 跟后端日志
+docker compose ps                  # 查看各服务状态
+docker compose down                # 停止（保留数据卷）
+docker compose down -v             # 停止并删除数据，彻底重来
+```
+
+> 若宿主机 8000 端口已被占用（例如你本机就跑着 uvicorn），可在仓库根目录建一个 `.env` 写入 `BACKEND_PORT=18000` 来换端口。
+
+### 国内网络拉取镜像失败怎么办
+
+在国内直连 Docker Hub 通常会失败，报错大致长这样：
+
+```text
+failed to resolve reference "docker.io/library/mysql:8.4": ... EOF
+short read: expected 132422522 bytes but got 109345216: unexpected EOF
+```
+
+这不是项目的问题，配一个镜像加速器即可。打开 **Docker Desktop → 设置 → Docker Engine**，
+在 JSON 里加上 `registry-mirrors`（其他字段保持你原有的值不动）：
+
+```json
+{
+  "registry-mirrors": [
+    "https://docker.m.daocloud.io"
+  ]
+}
+```
+
+点 **Apply & restart**，然后用这两条确认：
+
+```bash
+docker info | grep -A 3 "Registry Mirrors"   # 能列出你配的地址 = 配置已生效
+docker pull hello-world                      # 能拉下来 = 加速器真的通了
+```
+
+几个容易踩的点：
+
+- **加速器只镜像 Docker Hub 的官方镜像**。本项目用到的 `mysql` / `postgres` / `redis` /
+  `python` / `node` 都属于官方镜像，不需要改任何镜像名。
+- **多个加速器是按顺序尝试的**，所以可用的那个必须排第一位。国内加速器的可用性变化很快，
+  有的返回 `403 Forbidden`，有的直接 `EOF` —— 拉取失败就换一个再试。
+- 一旦某个加速器返回了 manifest，后续的 blob **也会走它，不会自动回退到下一个**。
+  因此把一个坏源排在第一位，会导致拉取必然失败。
+- 大镜像（`mysql:8.4` 下载量约 254 MB）在慢链路上可能中途断流，
+  报 `unexpected EOF` 时**直接重试**即可 —— 已下载完的层会被复用，不会从头再来。
+
+---
+
+## 手动部署（不使用 Docker 时）
 
 ### 前置：三个服务
 
@@ -140,13 +227,13 @@ flowchart LR
 
 ```bash
 # MySQL 业务库（含分类、新闻种子数据）
-mysql -u root -p < docs/02-数据库sql文件/database.sql
+mysql -u root -p < docs/sql/database.sql
 
 # PostgreSQL 聊天库
 psql -U postgres -c "CREATE DATABASE chat_db;"
 psql -U postgres -c "CREATE USER chatuser WITH PASSWORD '你的密码';"
 psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE chat_db TO chatuser;"
-psql -U chatuser -d chat_db -f docs/02-数据库sql文件/chat_db.sql
+psql -U chatuser -d chat_db -f docs/sql/chat_db.sql
 ```
 
 ### 2. 后端
@@ -173,10 +260,12 @@ python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 
 ```bash
 cd backend
-python -c "from rag.vector import VectorService; VectorService().load_document_sync()"
+python scripts/build_vector.py
 ```
 
-它会分页读取 `news` 表全部新闻，切分后写入 `chroma_db/`，并把每篇的 MD5 记到 `md5.text`。**再次执行时只处理内容有变化的新闻**，所以可以反复运行。
+它会分页读取 `news` 表全部新闻，切分后写入 `chroma_db/`，并把每篇内容的 MD5 指纹记到 `chroma_db/md5.text`。**再次执行时只处理内容有变化的新闻**（靠比对指纹），所以可以反复运行，不会重复花 embedding 费用。
+
+> 指纹文件刻意与向量库放在同一目录 —— 它描述的正是 `chroma_db/` 里的内容，两者必须成对存在、成对丢弃，分开存放容易出现"指纹说已索引、但向量库里没有"的错乱状态。
 
 > 未经此步骤，`news_qa` 链路检索不到任何资料，AI 会如实回答"资料中未覆盖"。
 
@@ -300,7 +389,7 @@ python text/probe_latency.py --quick
 
 - [接口规范](docs/01-接口规范文档/API接口规范文档.md)
 - [后端设计说明](docs/项目后端设计说明文档.md)
-- [数据库建表脚本](docs/02-数据库sql文件/database.sql)
+- [数据库建表脚本](docs/sql/database.sql)
 - [工程改进与测试报告](backend/项目改进与测试报告.md)
 - [压测与评测工具说明](backend/text/README.md)
 

@@ -1,0 +1,182 @@
+# ════════════════════════════════════════════════════════════════════════
+# 今日新闻 App —— 一条命令拉起全部依赖
+#
+#   【启动】后端 + MySQL + PostgreSQL + Redis
+#       docker compose up -d --build
+#
+#   【首次启动后必须做一次】构建站内新闻向量库（AI 问答依赖它）
+#       docker compose exec backend python scripts/build_vector.py
+#
+#   【可选】连前端一起启动
+#       docker compose --profile web up -d --build
+#
+#   【常用】
+#       docker compose logs -f backend     # 跟后端日志
+#       docker compose ps                  # 看状态
+#       docker compose down                # 停止（保留数据卷）
+#       docker compose down -v             # 停止并删除数据，彻底重来
+#
+# ── 设计要点 ──────────────────────────────────────────────────────────
+# 1. MySQL / PostgreSQL / Redis **一律不映射到宿主机端口**，只在内部网络互联。
+#    这样即使宿主机上已经跑着 MySQL、Redis、PostgreSQL，也不会抢端口而启动失败；
+#    同时数据库不对宿主开放，更安全。
+#    只有后端（默认 8000）暴露到宿主机。
+#
+# 2. 所有容器固定 Asia/Shanghai 时区。容器默认 UTC 会让 datetime.now() 差 8 小时，
+#    直接影响 token 过期判定、"今天有什么新闻"的当天日期、月度报告的月份边界。
+#
+# 3. 数据库地址与密码由下面的 environment 统一注入，会**覆盖** backend/.env 里的
+#    本机配置（Compose 中 environment 优先级高于 env_file）。所以你可以直接复用
+#    现有的 backend/.env，不用为 Docker 单独维护一份。
+#
+# 4. 大模型 Key 只从 backend/.env 读取（该文件不入库）。第一次用之前：
+#       Copy-Item backend\.env.example backend\.env      # PowerShell
+#       cp backend/.env.example backend/.env             # bash
+#    然后填入 DASHSCOPE_API_KEY。没有它容器能起来，但 AI 问答不可用。
+#
+# ── 可选：在仓库根目录建 .env 覆盖下面的默认值 ────────────────────────
+#     MYSQL_PASSWORD=你的密码        # 同时作用于 mysql 容器与 backend
+#     PG_PASSWORD=你的密码
+#     BACKEND_PORT=18000             # 宿主机 8000 被占用时改这里
+#     FRONTEND_PORT=15173
+# ════════════════════════════════════════════════════════════════════════
+
+name: toutiao-news
+
+services:
+  # ────────────────────────────── MySQL：业务库 ──────────────────────────────
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-mysql}
+      MYSQL_DATABASE: news_app
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # 首次创建数据卷时自动执行。挂载到 docker-entrypoint-initdb.d/ 的 .sql
+      # 会按文件名字母序被导入，所以加 01- 前缀保证顺序确定。
+      - ./docs/sql/database.sql:/docker-entrypoint-initdb.d/01-database.sql:ro
+      # 注意：容器初始化时中文能否正确入库，取决于 database.sql 顶部的
+      # `SET NAMES utf8mb4;`。上面 command 里的 --character-set-server 只作用于
+      # **服务端**，管不到客户端连接的字符集；而官方 mysql 镜像没有设置 locale，
+      # 客户端的字符集会退化到 latin1（实测过），导致中文双重编码。
+      # 详细说明见 database.sql 的文件头注释。
+    healthcheck:
+      # 用 $$ 转义，让 $$MYSQL_ROOT_PASSWORD 在容器内求值（而不是被 Compose 插值）
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ─────────────────────────── PostgreSQL：聊天库 ───────────────────────────
+  # 与业务库分库：聊天数据写入频繁且与业务无关，分开便于独立扩容与清理
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PG_USER:-chatuser}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-chatpass}
+      POSTGRES_DB: ${PG_DB:-chat_db}
+      TZ: Asia/Shanghai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docs/sql/chat_db.sql:/docker-entrypoint-initdb.d/01-chat_db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # ──────────────────────── Redis：缓存 / 限流 ────────────────────────
+  # 这里故意不设密码（本地演示足够，也省去同步密码的麻烦）。
+  # backend 容器的 REDIS_PASSWORD 被显式置空，代码里空值会转成 None，不发 AUTH。
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+  # ────────────────────────────── 后端 ──────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # 提供 DASHSCOPE_API_KEY 等业务配置。
+    # required: false 让 backend/.env 不存在时也能启动（AI 会不可用，但不会崩）
+    # 需要 Docker Compose ≥ 2.24
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      # ── 覆盖 backend/.env 里的 localhost 配置，指向容器网络的服务名 ──
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-mysql}
+      MYSQL_DB: news_app
+
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_USER: ${PG_USER:-chatuser}
+      PG_PASSWORD: ${PG_PASSWORD:-chatpass}
+      PG_DB: ${PG_DB:-chat_db}
+
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      REDIS_PASSWORD: ""
+
+      TZ: Asia/Shanghai
+      # 容器演示环境不往 LangSmith 上传链路数据
+      LANGSMITH_TRACING: "false"
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      # 向量库 + 增量索引指纹都放在 /app/chroma_db 下（见 config/chroma.yml），
+      # 用同一个卷持久化，容器重建后不用重新 embedding。
+      - chroma_data:/app/chroma_db
+    depends_on:
+      mysql:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ─────────────────── 前端（可选，默认不启动）───────────────────
+  #   docker compose --profile web up -d --build
+  frontend:
+    image: node:22-alpine
+    profiles: ["web"]
+    restart: unless-stopped
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ./frontend/web:/app
+      # 用具名卷盖住宿主机的 node_modules，避免两个平台的依赖混在一起
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:
+  postgres_data:
+  redis_data:
+  chroma_data:
+  frontend_node_modules:

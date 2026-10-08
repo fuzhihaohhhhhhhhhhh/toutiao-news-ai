@@ -2,7 +2,12 @@ collection_name : agent
 persist_directory : chroma_db
 k: 3
 data_path : data
-md5_hex_store : md5.text
+# 增量索引指纹（{news_id: md5}）刻意放在向量库目录**内部**：
+# 它描述的就是 chroma_db 里的内容，两者必须成对存在、成对丢弃，
+# 分开存放容易出现"指纹说已索引、但向量库里没有"的错乱状态。
+# 工程上的好处：Docker 里只挂一个数据卷就能把向量库和指纹一起持久化，
+# 容器重建后不需要重新 embedding。
+md5_hex_store : chroma_db/md5.text
 allow_knowledge_file_type : ["txt","pdf"]
 
 chunk_size : 200

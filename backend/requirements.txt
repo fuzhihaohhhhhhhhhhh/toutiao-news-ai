@@ -29,6 +29,16 @@ aiomysql==0.3.2
 asyncpg==0.32.0
 greenlet==3.5.4
 
+# MySQL 8 的**默认**认证插件是 caching_sha2_password，aiomysql（底层 PyMySQL）连接它时
+# 必须依赖 cryptography，否则报：
+#   RuntimeError: 'cryptography' package is required for sha256_password
+#                 or caching_sha2_password auth methods
+# 本机之所以"没它也能连"，是因为本机 MySQL 8.0.17 的 root 账号恰好是
+# mysql_native_password（已查 mysql.user 表确认）；而容器里新建的 MySQL 会用
+# caching_sha2_password，所以 Docker 化之后这一项是**必须**的。
+# 另外它是通过 PyMySQL 的可选 extra 引入的，不会被自动装上，必须显式声明。
+cryptography==50.0.0
+
 # ── 缓存（Redis：新闻缓存 + 聊天缓存 + 限流 + embedding 缓存）──
 redis==8.1.0
 

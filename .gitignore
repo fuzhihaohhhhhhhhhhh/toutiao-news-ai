@@ -28,8 +28,10 @@ env/
 logs/
 *.log
 # Chroma 向量库与它的增量索引指纹必须成对处理：
-# 只提交其中一个会导致"指纹说已索引、但向量库里没有"的错乱状态，
-# 因此两个都不入库，改由 README 里的重建命令生成。
+# 只保留其中一个会导致"指纹说已索引、但向量库里没有"的错乱状态，
+# 因此两者都不入库，改由 backend/scripts/build_vector.py 重新生成。
+# 指纹文件现已移动到 chroma_db/ 内部（见 config/chroma.yml 的 md5_hex_store），
+# 下面保留 md5.text 一行只为兼容早期版本放在 backend/ 根目录的写法。
 chroma_db/
 md5.text
 # 评测/压测跑出来的报告属于本地产物

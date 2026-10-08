@@ -1,4 +1,21 @@
 -- 新闻资讯应用数据库设计
+--
+-- ⚠️ 下面那行 `SET NAMES utf8mb4;` 不能删 —— 它决定中文能否正确入库。
+--
+-- 背景：本文件是 UTF-8 编码。MySQL 客户端若没有显式声明字符集，会退化到 latin1，
+-- 官方 mysql 镜像正是这种情况（镜像没有设置 locale，容器首次启动初始化时踩到过）。
+-- 于是客户端发出的 UTF-8 中文字节被服务端当成 latin1 解释，再转成 utf8mb4 存起来，
+-- 形成**双重编码**：
+--     正确  "头条" -> HEX E5A4B4E69DA1        CHAR_LENGTH = 2
+--     乱码  "头条" -> HEX C3A5C2A4C2B4…       CHAR_LENGTH = 6
+-- 新闻标题同理：正确的 15 字会坏成 37 字，整个库的中文全废。
+--
+-- `SET NAMES` 是**连接级**设置，与客户端配置文件、locale 都无关，
+-- 所以无论容器自动导入还是本机手动导入，都能保证按 UTF-8 解析。
+-- 注意 docker-compose.yml 里的 --character-set-server 只影响服务端，
+-- 管不到客户端连接的字符集，光靠它是修不好这个问题的。
+SET NAMES utf8mb4;
+
 -- 创建数据库
 CREATE DATABASE IF NOT EXISTS news_app DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

@@ -1,0 +1,42 @@
+# 构建镜像时排除的文件 —— 核心目的是不把密钥和可再生数据打进镜像层
+
+# ── 密钥：绝不能被 COPY 进镜像 ──
+.env
+.env.local
+.env.*.local
+# 模板可以进（不含真实值）
+!.env.example
+
+# ── Python 缓存 ──
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ── 可再生的派生产物（进镜像只会白白变大）──
+chroma_db/
+md5.text
+logs/
+*.log
+text/*_report_*.json
+text/*_report_*.md
+text/eval_set.draft.json
+
+# ── IDE / 版本控制 / 个人日志 ──
+.idea/
+.vscode/
+*.iml
+.git/
+.gitignore
+.gitattributes
+# 个人工作日志（含本地路径与个人记录）。它同时也在 .gitignore 里，
+# 这里必须重复声明一次 —— .gitignore 管的是"不进版本库"，
+# 而镜像构建走的是 .dockerignore，两者互不影响，漏了就会被打进镜像层。
+.workbuddy/
+
+# ── Docker 自身 ──
+Dockerfile
+.dockerignore
