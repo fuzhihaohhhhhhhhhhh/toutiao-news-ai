@@ -144,7 +144,12 @@ services:
       # 容器演示环境不往 LangSmith 上传链路数据
       LANGSMITH_TRACING: "false"
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      # BACKEND_BIND 控制监听地址：
+      #   本机开发（默认 0.0.0.0）—— 随便访问，方便
+      #   服务器部署 —— 在仓库根目录的 .env 里写 BACKEND_BIND=127.0.0.1，
+      #   让 8000 只对宿主机本机开放、公网访问不到（外部流量统一走 nginx）。
+      #   需要临时调试时用 ssh 隧道即可：ssh -L 8000:127.0.0.1:8000 用户@服务器
+      - "${BACKEND_BIND:-0.0.0.0}:${BACKEND_PORT:-8000}:8000"
     volumes:
       # 向量库 + 增量索引指纹都放在 /app/chroma_db 下（见 config/chroma.yml），
       # 用同一个卷持久化，容器重建后不用重新 embedding。

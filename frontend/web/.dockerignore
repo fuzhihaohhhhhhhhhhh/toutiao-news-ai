@@ -1,0 +1,32 @@
+# 前端镜像的构建上下文排除规则
+#
+# ⚠️ 这个文件不能省。
+# Dockerfile 的 builder 阶段要用 `COPY . .` 把源码拷进容器再编译。
+# 而宿主机上的 node_modules 是按 **Windows** 装的（里面有 .node 原生模块），
+# 一旦被拷进 Linux 容器，会覆盖掉 `npm ci` 装好的 Linux 版依赖，
+# 构建直接失败。dist/ 是上一次的产物，也没有拷进去的必要。
+
+# 依赖与产物
+node_modules/
+dist/
+dist-ssr/
+
+# 本地环境变量
+.env
+.env.local
+.env.*.local
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+npm-debug.log*
+
+# 构建上下文本身
+Dockerfile
+.dockerignore

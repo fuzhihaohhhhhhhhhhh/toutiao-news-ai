@@ -213,6 +213,81 @@ docker pull hello-world                      # 能拉下来 = 加速器真的通
 
 ---
 
+## 部署到服务器（生产）
+
+前置：服务器已装好 Docker。
+
+```bash
+# 1) 拿代码
+git clone https://github.com/fuzhihaohhhhhhhhhhh/toutiao-news-ai.git
+cd toutiao-news-ai
+
+# 2) 配大模型 Key
+cp backend/.env.example backend/.env
+chmod 600 backend/.env            # 收紧权限，只有属主可读
+vim backend/.env                  # 填入 DASHSCOPE_API_KEY
+
+# 3) 让后端端口只对本机开放（公网流量统一走 nginx）
+printf 'BACKEND_BIND=127.0.0.1\nWEB_PORT=80\n' > .env
+
+# 4) 启动：基础文件 + 生产叠加文件
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+# 5) 构建站内新闻向量库（只需一次）
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend \
+    python scripts/build_vector.py
+```
+
+完成后访问 `http://<服务器IP>/` 打开前端，`http://<服务器IP>/docs` 是接口文档。
+
+### 生产与开发的差别
+
+| | 本机开发 | 服务器生产 |
+| --- | --- | --- |
+| 启动命令 | `docker compose up -d` | `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build` |
+| 前端 | 本机 `npm run dev`（或 `--profile web` 起 Vite 开发服务器） | `nginx` 容器托管**编译后的静态文件** |
+| 对外端口 | 8000（后端） | 80（nginx）；后端 8000 建议只绑 `127.0.0.1` |
+| `/api` 由谁转发 | Vite 的 `server.proxy` | nginx 的 `proxy_pass` |
+
+### 为什么前端用相对路径 `/api`
+
+`127.0.0.1` 在**浏览器**里的含义是"访问者自己那台电脑"，不是服务器。
+所以前端绝不能写死后端地址 —— 否则部署到服务器后，页面的所有请求都会打到访问者本机而失败。
+
+改成相对路径（`src/config/api.js` 的 `baseURL` 默认为空串）之后：
+无论部署在什么 IP、什么域名、有没有 HTTPS，**前端代码都不用改**，而且与页面同源、天然没有跨域问题。
+
+需要指向另一个域名上的后端时，构建期传环境变量即可：
+
+```bash
+VITE_API_BASE_URL=https://api.example.com npm run build
+```
+
+### 服务器上还要注意这几点
+
+- **安全组放行端口**：云服务器默认只开 22/80/443，需要在控制台安全组里放行你用的 `WEB_PORT`（服务器自身的 `ufw`/`firewalld` 也要放行）。
+- **别把后端端口暴露到公网**：`/api/chat/stream` 每调用一次都消耗你的 DashScope 额度。按上面的步骤设 `BACKEND_BIND=127.0.0.1` 后，公网就访问不到 8000；需要调试时用 ssh 隧道：`ssh -L 8000:127.0.0.1:8000 用户@服务器`。
+- **镜像加速器**：国内云服务器同样拉不动 Docker Hub。阿里云在控制台提供**专属内网加速器地址**，比公共加速器更快更稳：
+
+  ```bash
+  sudo tee /etc/docker/daemon.json > /dev/null <<'EOF'
+  { "registry-mirrors": ["https://<你的专属地址>.mirror.aliyuncs.com"] }
+  EOF
+  sudo systemctl daemon-reload && sudo systemctl restart docker
+  docker info | grep -A 3 "Registry Mirrors"     # 验证是否生效
+  ```
+
+- **开机自启**：容器已配 `restart: unless-stopped`，但还要确认 **Docker 服务本身**开机自启 —— `sudo systemctl enable docker`。
+- **资源占用**：4 个容器同时运行约需 **1.5~2 GB 内存**，2 核 2G 的小机器会比较紧张。
+- **数据备份**：数据都在 named volume 里，`docker compose down -v` 会全部删除。例如备份 MySQL：
+
+  ```bash
+  docker run --rm -v toutiao-news_mysql_data:/data -v "$PWD":/backup alpine \
+      tar czf /backup/mysql-backup.tar.gz -C /data .
+  ```
+
+---
+
 ## 手动部署（不使用 Docker 时）
 
 ### 前置：三个服务
